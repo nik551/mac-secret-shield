@@ -6,8 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		5E0000000000000000000019 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5E0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5E0000000000000000000006;
+			remoteInfo = SecretShield;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		5E0000000000000000000004 /* SecretShield.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SecretShield.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5E0000000000000000000012 /* SecretShieldTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SecretShieldTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +27,22 @@
 			path = SecretShield;
 			sourceTree = "<group>";
 		};
+		5E0000000000000000000011 /* SecretShieldTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SecretShieldTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		5E0000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5E0000000000000000000014 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				5E0000000000000000000005 /* SecretShield */,
+				5E0000000000000000000011 /* SecretShieldTests */,
 				5E0000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				5E0000000000000000000004 /* SecretShield.app */,
+				5E0000000000000000000012 /* SecretShieldTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,6 +93,27 @@
 			productReference = 5E0000000000000000000004 /* SecretShield.app */;
 			productType = "com.apple.product-type.application";
 		};
+		5E0000000000000000000010 /* SecretShieldTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5E0000000000000000000016 /* Build configuration list for PBXNativeTarget "SecretShieldTests" */;
+			buildPhases = (
+				5E0000000000000000000013 /* Sources */,
+				5E0000000000000000000014 /* Frameworks */,
+				5E0000000000000000000015 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5E000000000000000000001A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5E0000000000000000000011 /* SecretShieldTests */,
+			);
+			name = SecretShieldTests;
+			productName = SecretShieldTests;
+			productReference = 5E0000000000000000000012 /* SecretShieldTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -77,6 +123,11 @@
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1640;
 				LastUpgradeCheck = 1640;
+				TargetAttributes = {
+					5E0000000000000000000010 = {
+						TestTargetID = 5E0000000000000000000006;
+					};
+				};
 			};
 			buildConfigurationList = 5E000000000000000000000A /* Build configuration list for PBXProject "SecretShield" */;
 			developmentRegion = en;
@@ -93,12 +144,20 @@
 			projectRoot = "";
 			targets = (
 				5E0000000000000000000006 /* SecretShield */,
+				5E0000000000000000000010 /* SecretShieldTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		5E0000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5E0000000000000000000015 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -115,7 +174,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5E0000000000000000000013 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5E000000000000000000001A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5E0000000000000000000006 /* SecretShield */;
+			targetProxy = 5E0000000000000000000019 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		5E000000000000000000000C /* Debug */ = {
@@ -202,6 +276,34 @@
 			};
 			name = Release;
 		};
+		5E0000000000000000000017 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = VJKN43CUQP;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nikhilvarghese.SecretShieldTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SecretShield.app/Contents/MacOS/SecretShield";
+			};
+			name = Debug;
+		};
+		5E0000000000000000000018 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = VJKN43CUQP;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nikhilvarghese.SecretShieldTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SecretShield.app/Contents/MacOS/SecretShield";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -219,6 +321,15 @@
 			buildConfigurations = (
 				5E000000000000000000000E /* Debug */,
 				5E000000000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5E0000000000000000000016 /* Build configuration list for PBXNativeTarget "SecretShieldTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5E0000000000000000000017 /* Debug */,
+				5E0000000000000000000018 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

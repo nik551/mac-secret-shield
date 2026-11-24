@@ -11,6 +11,10 @@ struct SecretShieldApp: App {
                 .disabled(mirror.isRunning)
             Button("Stop mirror") { Task { await mirror.stop() } }
                 .disabled(!mirror.isRunning)
+            #if DEBUG
+            Divider()
+            Toggle("Save viewer frames (debug)", isOn: Bindable(mirror).saveViewerFrames)
+            #endif
             Divider()
             Button("Quit SecretShield") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q")

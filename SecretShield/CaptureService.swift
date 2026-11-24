@@ -11,27 +11,24 @@ enum CaptureError: LocalizedError {
     }
 }
 
-/// Streams the main display at 30 fps with this app's windows excluded, runs each frame through a
-/// FrameProcessor on a background queue, then hands it to `onFrame` (still on that queue).
+/// Streams the main display at 30 fps with this app's windows excluded and hands each complete frame to
+/// `onFrame` on a background queue. Nothing here decides what is shown: the DelayBuffer does.
 @MainActor
 final class CaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
-    private let processor: any FrameProcessor
     private let onFrame: @Sendable (Frame) -> Void
     private let onStop: (any Error) -> Void
     private let frameQueue = DispatchQueue(label: "SecretShield.capture", qos: .userInteractive)
     private var stream: SCStream?
 
-    init(processor: any FrameProcessor,
-         onFrame: @escaping @Sendable (Frame) -> Void,
+    init(onFrame: @escaping @Sendable (Frame) -> Void,
          onStop: @escaping (any Error) -> Void) {
-        self.processor = processor
         self.onFrame = onFrame
         self.onStop = onStop
     }
 
-    func start() async throws {
+    func start(displayID: CGDirectDisplayID) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) else {
+        guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
             throw CaptureError.noMainDisplay
         }
         // Excluding the whole app (not a window list) also covers windows we open after capture starts.
@@ -46,7 +43,7 @@ final class CaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
         config.height = Int(filter.contentRect.height * scale)
         config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
         config.pixelFormat = kCVPixelFormatType_32BGRA
-        config.queueDepth = 6
+        config.queueDepth = 8 // max; the DelayBuffer holds a few frames while checking
         config.showsCursor = true
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
@@ -67,8 +64,7 @@ final class CaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
                             of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer),
               let pixelBuffer = sampleBuffer.imageBuffer else { return }
-        let frame = Frame(pixelBuffer: pixelBuffer, captureTime: sampleBuffer.presentationTimeStamp.seconds)
-        if let checked = processor.process(frame) { onFrame(checked) }
+        onFrame(Frame(pixelBuffer: pixelBuffer, captureTime: sampleBuffer.presentationTimeStamp.seconds))
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: any Error) {

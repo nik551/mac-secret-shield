@@ -8,24 +8,49 @@ final class MirrorController: NSObject, NSWindowDelegate {
     @ObservationIgnored private var capture: CaptureService?
     @ObservationIgnored private var window: NSWindow?
     @ObservationIgnored private let renderer = FrameRenderer()
+    #if DEBUG
+    @ObservationIgnored private let saver = ViewerFrameSaver()
+    /// Debug-only, off by default: write every frame the mirror shows to ~/Library/Caches/SecretShield/ViewerFrames.
+    var saveViewerFrames = false { didSet { saver.setEnabled(saveViewerFrames) } }
+    #endif
+
+    #if DEBUG
+    override init() {
+        super.init()
+        // Debug-only: `open SecretShield.app --args -SecretShieldAutostart YES [-SecretShieldSaveFrames YES]`
+        // starts mirroring (and saving viewer frames for leak-check.swift) without a click.
+        if UserDefaults.standard.bool(forKey: "SecretShieldSaveFrames") { saveViewerFrames = true; saver.setEnabled(true) } // didSet may not run in init
+        if UserDefaults.standard.bool(forKey: "SecretShieldAutostart") { Task { await start() } }
+    }
+    #endif
 
     func start() async {
         guard !isRunning else { return }
         guard hasScreenRecordingPermission() else { return showPermissionAlert() }
+        let detector: SecretDetector
+        do { detector = try SecretDetector.bundled() } catch { return showError(error) } // no patterns: don't mirror
         isRunning = true
 
+        let displayID = CGMainDisplayID() // capture the display with the menu bar at start
         let renderer = self.renderer
+        #if DEBUG
+        let saver = self.saver
+        #endif
+        let buffer = DelayBuffer(recognizer: VisionTextRecognizer(), detector: detector,
+                                 windowSource: LiveWindowSource(displayID: displayID)) { frame, stats in
+            #if DEBUG
+            saver.save(frame)
+            #endif
+            DispatchQueue.main.async { MainActor.assumeIsolated { renderer.show(frame, stats: stats) } }
+        }
         let service = CaptureService(
-            processor: PassthroughProcessor(),
-            onFrame: { frame in
-                DispatchQueue.main.async { MainActor.assumeIsolated { renderer.show(frame) } }
-            },
+            onFrame: { buffer.submit($0) },
             onStop: { [weak self] error in
                 Task { await self?.stop() }
                 self?.showError(error)
             })
         do {
-            try await service.start()
+            try await service.start(displayID: displayID)
             capture = service
             showWindow()
         } catch {

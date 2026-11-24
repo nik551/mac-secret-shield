@@ -1,5 +1,4 @@
 import AppKit
-import CoreMedia
 
 /// Displays frames by handing each pixel buffer's IOSurface (GPU memory) straight to Core Animation:
 /// no copy, no NSImage. Also draws the FPS / latency readout.
@@ -33,13 +32,16 @@ final class FrameRenderer: NSView {
     override var wantsUpdateLayer: Bool { true }
     override func updateLayer() {}
 
-    func show(_ frame: Frame) {
+    private var pipeline = PipelineStats()
+
+    func show(_ frame: Frame, stats: PipelineStats) {
+        pipeline = stats
         guard let surface = CVPixelBufferGetIOSurface(frame.pixelBuffer)?.takeUnretainedValue() else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true) // no implicit cross-fade between frames
         layer?.contents = surface
         CATransaction.commit()
-        record(latency: CMClockGetTime(CMClockGetHostTimeClock()).seconds - frame.captureTime)
+        record(latency: Frame.now() - frame.captureTime)
     }
 
     func clear() {
@@ -49,15 +51,16 @@ final class FrameRenderer: NSView {
         setStats("Waiting for frames…")
     }
 
-    /// Latency = capture timestamp → frame handed to Core Animation (the compositor adds ~1 refresh on top).
+    /// Delay = capture timestamp → checked frame handed to Core Animation (the compositor adds ~1 refresh on top).
     private func record(latency: CFTimeInterval) {
         frameCount += 1
         latencySum += latency
         latencyMax = max(latencyMax, latency)
         let elapsed = CACurrentMediaTime() - windowStart
         guard elapsed >= 0.5 else { return }
-        setStats(String(format: "%.1f fps · latency avg %.0f ms, max %.0f ms",
-                        Double(frameCount) / elapsed, latencySum / Double(frameCount) * 1000, latencyMax * 1000))
+        setStats(String(format: "%.1f fps · delay avg %.0f ms, max %.0f ms · OCR %.0f ms · %d redacted · %d fail-closed frames",
+                        Double(frameCount) / elapsed, latencySum / Double(frameCount) * 1000, latencyMax * 1000,
+                        pipeline.ocrMs, pipeline.redactions, pipeline.failClosedFrames))
         frameCount = 0; latencySum = 0; latencyMax = 0
         windowStart = CACurrentMediaTime()
     }
