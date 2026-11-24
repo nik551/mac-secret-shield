@@ -23,7 +23,7 @@ protocol TextRecognizer: Sendable {
 /// the characters both saw and joined in the middle of the overlap, away from the glyphs cut by tile edges.
 struct VisionTextRecognizer: TextRecognizer {
     static let maxTileWidth: CGFloat = 900
-    static let maxTileHeight: CGFloat = 1100 // a 1080p screen is one row of tiles
+    static let maxTileHeight: CGFloat = 540 // since macOS 27, taller tiles made Vision skip whole lines
     static let tileOverlap: CGFloat = 200  // horizontal: ~25 characters at 1x, enough to align two readings
     static let rowOverlap: CGFloat = 64    // vertical: taller than a text line, so every line is whole in some tile
 
