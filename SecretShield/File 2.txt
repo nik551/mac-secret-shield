@@ -1,0 +1,1 @@
+Check: I rebuilt with -allowProvisioningUpdates, which lets Xcode create the certificate during the build, and it succeeded. The app is signed by Apple Development: nikhil.varghese23@gmail.com (CR4Z7RGY5L). macOS ties the Screen Recording permission to that certificate 
