@@ -9,13 +9,23 @@ final class Redactor: @unchecked Sendable {
     private var pool: CVPixelBufferPool?
     private var poolSize = (width: 0, height: 0)
 
-    /// `rects` are frame pixels, top-left origin. Returns nil if it couldn't draw (caller must then drop the frame).
-    func redact(_ frame: Frame, covering rects: [CGRect]) -> Frame? {
-        guard !rects.isEmpty else { return frame }
+    /// `rects` are frame pixels, top-left origin, covered in black. `holds` are areas whose current pixels are not
+    /// verified: they show the same area of `lastSafe` (the last released frame) instead, or black if there is none.
+    /// Returns nil if it couldn't draw (caller must then drop the frame).
+    func redact(_ frame: Frame, covering rects: [CGRect], holding holds: [CGRect] = [], from lastSafe: Frame? = nil) -> Frame? {
+        guard !rects.isEmpty || !holds.isEmpty else { return frame }
         let input = frame.pixelBuffer
         let w = CVPixelBufferGetWidth(input), h = CVPixelBufferGetHeight(input)
         var image = CIImage(cvPixelBuffer: input)
         let black = CIImage(color: .black)
+        let held = lastSafe.flatMap { safe in
+            CVPixelBufferGetWidth(safe.pixelBuffer) == w && CVPixelBufferGetHeight(safe.pixelBuffer) == h
+                ? CIImage(cvPixelBuffer: safe.pixelBuffer) : nil
+        } ?? black
+        for r in holds {
+            image = held.cropped(to: CGRect(x: r.minX, y: CGFloat(h) - r.maxY, width: r.width, height: r.height))
+                .composited(over: image)
+        }
         for r in rects { // Core Image's origin is bottom-left
             image = black.cropped(to: CGRect(x: r.minX, y: CGFloat(h) - r.maxY, width: r.width, height: r.height))
                 .composited(over: image)

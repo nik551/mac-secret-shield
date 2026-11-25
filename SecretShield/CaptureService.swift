@@ -44,7 +44,7 @@ final class CaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
         config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.queueDepth = 8 // max; the DelayBuffer holds a few frames while checking
-        config.showsCursor = true
+        config.showsCursor = false // the pointer never reaches viewers; hover changes are judged separately
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)

@@ -14,6 +14,9 @@ struct SecretShieldApp: App {
             #if DEBUG
             Divider()
             Toggle("Save viewer frames (debug)", isOn: Bindable(mirror).saveViewerFrames)
+            Toggle("Record raw vs shield next session (debug)", isOn: Bindable(mirror).recordComparison)
+                .disabled(mirror.isRunning)
+            Button("AX Probe (debug)") { Task { await mirror.runAXProbe() } }
             #endif
             Divider()
             Button("Quit SecretShield") { NSApplication.shared.terminate(nil) }

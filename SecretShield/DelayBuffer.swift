@@ -7,6 +7,9 @@ struct PipelineStats: Sendable {
     var redactions = 0
     /// Frames released with every changed band blacked out because the check missed its budget or failed.
     var failClosedFrames = 0
+    /// Frames in which at least one AX terminal's area showed the last sanitized pixels instead of new ones.
+    var heldFrames = 0
+    var heldReasons: [String: Int] = [:]
 }
 
 /// Holds each captured frame until it has been checked, then releases it with secrets covered.
@@ -24,6 +27,7 @@ final class DelayBuffer: @unchecked Sendable {
     private let recognizer: any TextRecognizer
     private let detector: SecretDetector
     private let windowSource: any WindowSource
+    private let axSource: AXTerminalSource?
     private let redactor: Redactor
     private let onRelease: @Sendable (Frame, PipelineStats) -> Void
     private let queue = DispatchQueue(label: "SecretShield.delay", qos: .userInteractive)
@@ -38,18 +42,22 @@ final class DelayBuffer: @unchecked Sendable {
     /// (e.g. the first row of a wrapped key scrolled away). Memory only: never logged or written anywhere.
     private var remembered: [String] = []
     private var stats = PipelineStats()
+    private var lastSafe: Frame?                      // last released (sanitized) frame, for holds
+    private var axReference: [String: AXTerminalSource.State] = [:] // per window: state at the reference frame
+    private var axWaitScheduled = false
 
     private final class Job: @unchecked Sendable { var released = false } // touched only on `queue`
     /// Counts and timings only, never screen content. Watch with: log stream --predicate 'subsystem == "SecretShield"'
     private static let log = Logger(subsystem: "SecretShield", category: "pipeline")
 
     init(budget: CFTimeInterval = 0.3, recognizer: any TextRecognizer, detector: SecretDetector,
-         windowSource: any WindowSource, redactor: Redactor = Redactor(),
+         windowSource: any WindowSource, axSource: AXTerminalSource? = nil, redactor: Redactor = Redactor(),
          onRelease: @escaping @Sendable (Frame, PipelineStats) -> Void) {
         self.budget = budget
         self.recognizer = recognizer
         self.detector = detector
         self.windowSource = windowSource
+        self.axSource = axSource
         self.redactor = redactor
         self.onRelease = onRelease
     }
@@ -63,37 +71,54 @@ final class DelayBuffer: @unchecked Sendable {
 
     private func startNextIfIdle() {
         guard !busy, let frame = waiting else { return }
+        // AX masks are only trusted for a frame once the terminal state is known to have held around its capture.
+        if axSource != nil, Frame.now() < frame.captureTime + AXTerminalSource.settle + 0.008 {
+            if !axWaitScheduled {
+                axWaitScheduled = true
+                queue.asyncAfter(deadline: .now() + (frame.captureTime + AXTerminalSource.settle + 0.008 - Frame.now())) {
+                    self.axWaitScheduled = false
+                    self.startNextIfIdle()
+                }
+            }
+            return
+        }
         waiting = nil
+        let size = CGSize(width: CVPixelBufferGetWidth(frame.pixelBuffer), height: CVPixelBufferGetHeight(frame.pixelBuffer))
         let bands = changes.changedBands(in: frame.pixelBuffer)
-        if bands.isEmpty { return release(frame, covering: checkedRedactions) }
 
-        guard let windows = windowSource.windows(frameSize: CGSize(width: CVPixelBufferGetWidth(frame.pixelBuffer), height: CVPixelBufferGetHeight(frame.pixelBuffer))) else {
+        guard let windows = windowSource.windows(frameSize: size) else {
             // Can't tell which text is in a terminal: black out everything that changed (reference stays as is).
             stats.failClosedFrames += 1
             return release(frame, covering: checkedRedactions.filter { r in !bands.contains { $0.intersects(r) } } + bands)
         }
-        let terminals = windows.filter(\.isTerminal).map(\.frame)
+        let ax = axCheck(frame, windows: windows, bands: bands, size: size)
+        if bands.isEmpty { return release(frame, covering: checkedRedactions + ax.masks, holding: ax.holds) }
+
+        let terminals = windows.filter { $0.isTerminal && !ax.handled.contains($0.frame) }.map(\.frame)
         let (regions, carried, areas, newText) = plan(frame, bands: bands, terminals: terminals)
         // Text in a terminal's widened area counts as terminal text even when the window list lags the pixels
-        // (dragging); windows in front of it still own their own text.
-        let checkedWindows = windows.map { w in
+        // (dragging); windows in front of it still own their own text. AX-handled terminals are left out of OCR.
+        let checkedWindows = windows.filter { !ax.handled.contains($0.frame) }.map { w in
             var widened = w
             widened.reach = areas.first { $0.window == w.frame }?.area
             return widened
         }
         if regions.isEmpty { // only scrolled / non-terminal changes: nothing new to read
-            changes.setReference(frame.pixelBuffer)
+            if ax.holds.isEmpty {
+                changes.setReference(frame.pixelBuffer)
+                axReference.merge(ax.states) { _, new in new }
+            }
             checkedTerminals = terminals
             checkedRedactions = carried
-            stats.redactions = carried.count
-            return release(frame, covering: carried)
+            stats.redactions = carried.count + ax.masks.count
+            return release(frame, covering: carried + ax.masks, holding: ax.holds)
         }
 
         let job = Job()
         busy = true
         let remaining = max(0, frame.captureTime + budget - Frame.now())
         queue.asyncAfter(deadline: .now() + remaining) {
-            self.failClosed(job, frame, covering: carried + regions)
+            self.failClosed(job, frame, covering: carried + regions + ax.masks, holding: ax.holds)
         }
         let waitedMs = Int((Frame.now() - frame.captureTime) * 1000)
         ocrQueue.async { [recognizer, detector, remembered] in
@@ -111,7 +136,10 @@ final class DelayBuffer: @unchecked Sendable {
                     """)
                 if let found {
                     self.remember(detection?.secrets ?? [])
-                    self.changes.setReference(frame.pixelBuffer)
+                    if ax.holds.isEmpty {
+                        self.changes.setReference(frame.pixelBuffer)
+                        self.axReference.merge(ax.states) { _, new in new }
+                    }
                     self.checkedTerminals = terminals
                     // Re-read rows find the same secrets again: drop carried blocks a fresh one already covers.
                     self.checkedRedactions = found + carried.filter { c in !found.contains { $0.contains(c.insetBy(dx: 2, dy: 2)) } }
@@ -119,15 +147,15 @@ final class DelayBuffer: @unchecked Sendable {
                     self.stats.redactions = self.checkedRedactions.count
                     if !job.released {
                         job.released = true
-                        self.release(frame, covering: self.checkedRedactions)
+                        self.release(frame, covering: self.checkedRedactions + ax.masks, holding: ax.holds)
                     } else if self.waiting == nil {
                         // This frame went out blacked out at its deadline. Nothing newer has arrived (ScreenCaptureKit
                         // sends nothing while the screen is still), so show the now-checked version instead of
                         // leaving the mirror stuck on black.
-                        self.release(frame, covering: self.checkedRedactions)
+                        self.release(frame, covering: self.checkedRedactions + ax.masks, holding: ax.holds)
                     }
                 } else {
-                    self.failClosed(job, frame, covering: carried + regions)
+                    self.failClosed(job, frame, covering: carried + regions + ax.masks, holding: ax.holds)
                 }
                 self.startNextIfIdle()
             }
@@ -199,16 +227,89 @@ final class DelayBuffer: @unchecked Sendable {
         if remembered.count > 500 { remembered.removeFirst(remembered.count - 500) }
     }
 
-    private func failClosed(_ job: Job, _ frame: Frame, covering rects: [CGRect]) {
+    private func failClosed(_ job: Job, _ frame: Frame, covering rects: [CGRect], holding holds: [CGRect] = []) {
         guard !job.released else { return }
         job.released = true
         stats.failClosedFrames += 1
-        release(frame, covering: rects)
+        release(frame, covering: rects, holding: holds)
     }
 
-    private func release(_ frame: Frame, covering rects: [CGRect]) {
-        guard let safe = redactor.redact(frame, covering: rects) else { return } // can't cover: drop, keep last safe frame
+    private func release(_ frame: Frame, covering rects: [CGRect], holding holds: [CGRect] = []) {
+        // can't draw the blocks: drop the frame, the mirror keeps the last safe one
+        guard let safe = redactor.redact(frame, covering: rects, holding: holds, from: lastSafe) else { return }
+        lastSafe = safe
+        if !holds.isEmpty { stats.heldFrames += 1 }
+        Self.log.notice("""
+            release: delay \(Int((Frame.now() - frame.captureTime) * 1000), privacy: .public) ms, \
+            blocks \(rects.count, privacy: .public), held areas \(holds.count, privacy: .public)
+            """)
         onRelease(safe, stats)
+    }
+
+    // MARK: AX terminals
+
+    static func describe(_ r: CGRect) -> String {
+        r.isNull ? "-" : "(\(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))x\(Int(r.height)))"
+    }
+
+    /// For each Terminal/iTerm2 window: its masks if its AX state is verified for this frame, else its visible area
+    /// as a hold. `handled` are the windows AX took care of (left out of OCR); a window AX can't read for over a
+    /// second falls back to OCR instead.
+    private func axCheck(_ frame: Frame, windows: [WindowInfo], bands: [CGRect], size: CGSize)
+        -> (masks: [CGRect], holds: [CGRect], handled: [CGRect], states: [String: AXTerminalSource.State]) {
+        guard let axSource else { return ([], [], [], [:]) }
+        var masks: [CGRect] = [], holds: [CGRect] = [], handled: [CGRect] = []
+        var states: [String: AXTerminalSource.State] = [:]
+        // Masks and holds are NOT clipped by the windows listed in front: that list can lag the screen after a
+        // window comes forward, and clipping by a stale list once left a whole terminal unmasked. Covering a little
+        // of the window in front is the safe direction.
+        let margin = 2 * CGFloat(ChangeDetector.stripHeight)
+        let verdicts = axSource.verdicts(capturedAt: frame.captureTime, frameSize: size)
+        for v in verdicts {
+            let key = "\(v.id)"
+            switch v.verdict {
+            case .verified(let state, let windowMasks, let cursors, let rowHeight):
+                let box = windowMasks.reduce(CGRect.null) { $0.union($1) }
+                Self.log.notice("ax: \(Self.describe(v.frame), privacy: .public) verified, \(windowMasks.count, privacy: .public) masks in \(Self.describe(box), privacy: .public)")
+                // Same text state as at the reference frame, yet pixels changed: only the cursor's or the mouse's
+                // row may change without re-verification; anything else waits until the screen settles.
+                let changed = bands.map { $0.intersection(v.frame) }.filter { !$0.isNull && !$0.isEmpty }
+                let rowMargin = rowHeight + 2 * CGFloat(ChangeDetector.stripHeight)
+                var allowed = cursors.map { CGRect(x: v.frame.minX, y: $0.minY - rowMargin, width: v.frame.width, height: $0.height + 2 * rowMargin) }
+                if let mouse = axSource.mouseInPixels(frameSize: size) {
+                    allowed.append(CGRect(x: v.frame.minX, y: mouse.y - rowMargin, width: v.frame.width, height: 2 * rowMargin))
+                }
+                let explained = changed.allSatisfy { c in allowed.contains { $0.contains(c) } }
+                if axReference[key] == state, !explained, waiting != nil {
+                    holds.append(v.frame)
+                    stats.heldReasons["pixels changed without a text change, screen not settled", default: 0] += 1
+                    Self.log.notice("held: pixels changed without a text change, screen not settled")
+                } else {
+                    masks += windowMasks
+                    states[key] = state
+                }
+            case .unverified(let reason):
+                // Hold everywhere the window has been since shortly before capture (it may be moving), plus a margin.
+                // Never handed to OCR instead: OCR has never checked these pixels, and unchanged pixels would then
+                // go out unchecked. An unreadable terminal stays held (fail closed).
+                holds.append(v.history.insetBy(dx: -margin, dy: -margin))
+                stats.heldReasons[reason, default: 0] += 1
+                Self.log.notice("held: \(reason, privacy: .public) \(Self.describe(v.frame), privacy: .public)")
+            }
+        }
+        // Terminal/iTerm2 windows AX doesn't track yet (just opened): hold them until it does.
+        for window in windows where AXTerminalSource.bundleIDs.contains(window.bundleID) {
+            handled.append(window.frame) // never OCR'd: AX or nothing
+            let tracked = verdicts.contains { v in // same window: edges within 40 px (both lists are read ~10 ms apart)
+                abs(v.frame.minX - window.frame.minX) < 40 && abs(v.frame.minY - window.frame.minY) < 40
+                    && abs(v.frame.maxX - window.frame.maxX) < 40 && abs(v.frame.maxY - window.frame.maxY) < 40
+            }
+            guard !tracked else { continue }
+            holds.append(window.frame.insetBy(dx: -margin, dy: -margin))
+            stats.heldReasons["window not tracked yet", default: 0] += 1
+            Self.log.notice("held: window not tracked yet \(Self.describe(window.frame), privacy: .public)")
+        }
+        return (masks, holds, handled, states)
     }
 
     // MARK: Detection (pure apart from OCR; static so tests can call it)

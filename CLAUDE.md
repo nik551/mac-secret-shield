@@ -115,3 +115,32 @@ Skip / later: AI detection, automatic share-mode detection, team dashboard, clou
 - Record the viewer-side output of the mirror window and check every frame for the seeded secrets.
   Target: zero raw-frame exposure, including during fast scrolling, freshly printed tokens, window
   switching, resizing, multiple displays and capture interruptions.
+
+## Safety rules (added after the OCR live tests, Nov 2026)
+- **Core metric: no unverified pixel may ever reach the shared output.**
+- Never display a frame with masks from a different content state. Masks are versioned by: window identity,
+  text version, window bounds, display scale, scroll position, layout/font state, mask generation.
+- If state changed and isn't verified: keep the last sanitized frame or cover the changed area. Never publish a
+  raw frame.
+- Never ignore a pixel change just because it's small. Only known cursor/hover changes may reuse existing masks.
+- Never request AX bounds for a multi-line range; split into one range per visual row. Never use one bounding box
+  across lines.
+- Mask the full value including wrapped parts; keep `KEY=` visible; minimal padding; if value boundaries are
+  uncertain, mask the whole line.
+- Rendering (~30 fps preview) is separate from detection; reuse safe frames while waiting. Never raise fps by
+  skipping verification.
+- No networking/telemetry; no secret values or detected text in logs, crash reports or diagnostics; session
+  fingerprints (remembered secrets) are cleared when mirroring stops.
+- Debug frame saving: off by default, explicit opt-in only, synthetic test secrets only, restrictive file
+  permissions (0700/0600), never in normal use.
+
+## Direction: Accessibility (AX) text for terminals, OCR as fallback
+OCR proved too slow and inexact for terminals (last live test: a Slack token leaked, heavy over-blocking, full
+blackout on mouse hover, ~5.5 fps / ~290 ms). Terminal text should come from the macOS Accessibility API; OCR
+stays as the fallback for terminals where AX is unreliable and for other apps.
+
+Gates, each reviewed before the next starts:
+1. **AX feasibility**: per terminal, which attributes work, text accuracy, per-row bounds, timings.
+2. **Security**: zero leaks in receiver-side output across 20 stress runs.
+3. **Usability**: no hover blackouts, key names visible, minimal blocking.
+4. **Speed**: ~30 fps, <100 ms added delay, without relaxing any check.
